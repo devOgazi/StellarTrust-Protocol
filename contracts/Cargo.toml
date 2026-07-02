@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "shared",
+    "identity",
+    "credit-score",
+    "registry",
+    "governance",
+]
+resolver = "2"
+
+[workspace.dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
