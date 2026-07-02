@@ -1,0 +1,23 @@
+name: Deploy to Mainnet
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy-mainnet:
+    name: Deploy contracts to Stellar mainnet
+    runs-on: ubuntu-latest
+    environment: mainnet   # requires manual approval
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install stellar-cli
+        run: cargo install --locked stellar-cli --features opt
+      - name: Build & deploy
+        working-directory: contracts
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.MAINNET_SECRET_KEY }}
+        run: make deploy-mainnet

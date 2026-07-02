@@ -1,0 +1,22 @@
+name: Deploy to Testnet
+
+on:
+  push:
+    branches: [develop]
+
+jobs:
+  deploy-testnet:
+    name: Deploy contracts to Stellar testnet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install stellar-cli
+        run: cargo install --locked stellar-cli --features opt
+      - name: Build & deploy
+        working-directory: contracts
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.TESTNET_SECRET_KEY }}
+        run: make deploy-testnet
