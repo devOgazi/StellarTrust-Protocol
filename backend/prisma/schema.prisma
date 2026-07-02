@@ -1,0 +1,48 @@
+// Prisma database schema for StellarTrust backend.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Identity {
+  id        String   @id @default(cuid())
+  address   String   @unique
+  did       String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Credential {
+  id             String    @id @default(cuid())
+  credentialId   String    @unique
+  ownerAddress   String
+  issuerAddress  String
+  credentialType String
+  issuedAt       DateTime  @default(now())
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+}
+
+model ScoreSnapshot {
+  id         String   @id @default(cuid())
+  address    String
+  score      Int
+  dataPoints Int
+  snapshotAt DateTime @default(now())
+
+  @@index([address])
+}
+
+model Issuer {
+  id              String   @id @default(cuid())
+  address         String   @unique
+  name            String
+  credentialTypes String[]
+  registeredAt    DateTime @default(now())
+  active          Boolean  @default(true)
+}
