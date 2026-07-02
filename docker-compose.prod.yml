@@ -1,0 +1,44 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: stellartrust
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  ipfs:
+    image: ipfs/kubo:v0.27.0
+    volumes:
+      - ipfs_data:/data/ipfs
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/stellartrust/backend:latest
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - postgres
+      - redis
+      - ipfs
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/stellartrust/frontend:latest
+    env_file:
+      - ./frontend/.env.local
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ipfs_data:
