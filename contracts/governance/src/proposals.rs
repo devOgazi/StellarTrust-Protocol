@@ -1,0 +1,1 @@
+//! Governance proposals — placeholder.

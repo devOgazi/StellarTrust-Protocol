@@ -1,0 +1,1 @@
+//! Payment history tracking — placeholder.
