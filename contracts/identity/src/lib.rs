@@ -12,7 +12,8 @@
 //! | `revoke_credential`   | Revoke a credential                          |
 //! | `resolve_did`         | Resolve a DID document                       |
 //! | `attest`              | Add an attestation from a trusted issuer     |
-//! | `register_issuer`     | Admin: register a trusted issuer             |
+//! | `register_issuer`     | Admin: register a trusted issuer (local)     |
+//! | `init_registry`       | Admin: wire in the external Registry contract|
 
 #![no_std]
 
@@ -30,7 +31,7 @@ use attestation::attest as do_attest;
 use credentials::{add_credential as do_add_credential, revoke_credential as do_revoke_credential};
 use did::{create_did as do_create_did, resolve_did as do_resolve_did};
 use errors::IdentityError;
-use registry_check::register_trusted_issuer;
+use registry_check::{register_trusted_issuer, set_registry_contract};
 
 // ---------------------------------------------------------------------------
 // Contract definition
@@ -82,7 +83,10 @@ impl IdentityContract {
     /// Returns the `CredentialId` (`credential_hash`) on success.
     ///
     /// Requires `issuer` to authorise the transaction and to be a registry-
-    /// trusted issuer for `credential_type`.
+    /// trusted issuer for `credential_type`. If a Registry contract has been
+    /// configured via `init_registry`, trust is verified by cross-calling
+    /// `RegistryContract::is_trusted_issuer`; otherwise the local allow-list
+    /// is used.
     pub fn add_credential(
         env: Env,
         owner: Address,
@@ -116,7 +120,10 @@ impl IdentityContract {
     /// Records an attestation claim by a trusted `issuer` about `subject`.
     ///
     /// Requires `issuer` to authorise the transaction and to be registered as
-    /// a trusted issuer.
+    /// a trusted issuer. If a Registry contract has been configured via
+    /// `init_registry`, trust is verified by cross-calling
+    /// `RegistryContract::is_trusted_issuer_any`; otherwise the local
+    /// allow-list is consulted.
     pub fn attest(
         env: Env,
         issuer: Address,
@@ -131,7 +138,8 @@ impl IdentityContract {
     // Admin
     // -----------------------------------------------------------------------
 
-    /// Registers `issuer` as a trusted issuer for `credential_type`.
+    /// Registers `issuer` as a trusted issuer for `credential_type` in the
+    /// identity contract's **local** allow-list.
     ///
     /// Pass `None` for `credential_type` to trust the issuer for all types.
     ///
@@ -146,6 +154,19 @@ impl IdentityContract {
         admin.require_auth();
         register_trusted_issuer(&env, issuer, credential_type);
     }
+
+    /// Wires in the external Registry contract.
+    ///
+    /// Once set, `attest()` and `add_credential()` will cross-call
+    /// `RegistryContract::is_trusted_issuer[_any]` instead of consulting the
+    /// local allow-list. This enforces the README's "Issuer authorization"
+    /// security property through the standalone registry.
+    ///
+    /// Requires `admin` to authorise the call.
+    pub fn init_registry(env: Env, admin: Address, registry: Address) {
+        admin.require_auth();
+        set_registry_contract(&env, registry);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -157,9 +178,13 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
-        Bytes, BytesN, Env, String,
+        Bytes, BytesN, Env, String, Vec,
     };
     use stellartrust_shared::types::{AttestationClaim, CredentialType};
+
+    // Pull in the registry contract for cross-contract tests.
+    use stellartrust_registry::{RegistryContract, RegistryContractClient};
+    use stellartrust_registry::issuers::IssuerMetadata;
 
     // -----------------------------------------------------------------------
     // Helpers
@@ -326,7 +351,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Attestation from non-trusted issuer test
+    // Attestation from non-trusted issuer test (local allow-list)
     // -----------------------------------------------------------------------
 
     #[test]
@@ -408,5 +433,96 @@ mod tests {
             result.is_err(),
             "add_credential from untrusted issuer should fail"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Cross-contract Registry rejection test
+    //
+    // This test verifies Task 4 + Task 5: when the identity contract is wired
+    // to the Registry contract via init_registry(), attest() rejects issuers
+    // that are not registered in the Registry.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_registry_wired_attest_rejects_unregistered_issuer() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // Deploy the Registry contract.
+        let registry_id = env.register(RegistryContract, ());
+        let _registry_client = RegistryContractClient::new(&env, &registry_id);
+
+        // Deploy the Identity contract.
+        let identity_id = env.register(IdentityContract, ());
+        let identity_client = IdentityContractClient::new(&env, &identity_id);
+
+        // Wire the Registry into the Identity contract.
+        let admin = Address::generate(&env);
+        identity_client.init_registry(&admin, &registry_id);
+
+        // Create a DID for the subject.
+        let (subject, did_string) = owner_did_string(&env);
+        let pk = make_primary_key(&env);
+        identity_client.create_did(&subject, &did_string, &pk);
+
+        // This issuer is NOT registered in the Registry.
+        let untrusted = Address::generate(&env);
+        let claim = AttestationClaim {
+            claim_key: String::from_str(&env, "kyc_tier"),
+            claim_value: Bytes::from_slice(&env, &[1u8]),
+            expires_at: None,
+        };
+
+        let result = identity_client.try_attest(&untrusted, &subject, &claim);
+        assert!(
+            result.is_err(),
+            "registry-wired attest must reject an unregistered issuer"
+        );
+    }
+
+    #[test]
+    fn test_registry_wired_attest_accepts_registered_issuer() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // Deploy Registry and register an issuer.
+        let registry_id = env.register(RegistryContract, ());
+        let registry_client = RegistryContractClient::new(&env, &registry_id);
+
+        let reg_admin = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let meta = IssuerMetadata {
+            name: String::from_str(&env, "Trusted Corp"),
+            url: String::from_str(&env, "https://trusted.example"),
+            registered_at: 0,
+            active: true,
+        };
+        registry_client.register_issuer(
+            &reg_admin,
+            &issuer,
+            &meta,
+            &Vec::new(&env),
+        );
+
+        // Deploy Identity and wire in the Registry.
+        let identity_id = env.register(IdentityContract, ());
+        let identity_client = IdentityContractClient::new(&env, &identity_id);
+
+        let id_admin = Address::generate(&env);
+        identity_client.init_registry(&id_admin, &registry_id);
+
+        // Create a DID for the subject.
+        let (subject, did_string) = owner_did_string(&env);
+        let pk = make_primary_key(&env);
+        identity_client.create_did(&subject, &did_string, &pk);
+
+        let claim = AttestationClaim {
+            claim_key: String::from_str(&env, "kyc_tier"),
+            claim_value: Bytes::from_slice(&env, &[2u8]),
+            expires_at: None,
+        };
+
+        // Should succeed — issuer is registered in the Registry.
+        identity_client.attest(&issuer, &subject, &claim);
     }
 }
