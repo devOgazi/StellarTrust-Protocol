@@ -12,3 +12,4 @@ stellartrust-shared = { path = "../shared" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+stellartrust-shared = { path = "../shared" }
