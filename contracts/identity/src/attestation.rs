@@ -85,6 +85,7 @@ pub fn attest(
 }
 
 /// Returns all attestations stored for a given subject.
+#[allow(dead_code)]
 pub fn get_attestations(env: &Env, subject: Address) -> Vec<Attestation> {
     let key = AttestationKey::Attestations(subject);
     env.storage()

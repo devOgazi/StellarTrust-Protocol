@@ -109,6 +109,7 @@ pub fn save_did(env: &Env, mut doc: DIDDocument) -> DIDDocument {
 
 /// Returns the credential list for an owner, or an empty vec if the DID does
 /// not exist.
+#[allow(dead_code)]
 pub fn get_credentials(env: &Env, owner: &Address) -> Vec<CredentialRef> {
     let key = DataKey::DIDDoc(owner.clone());
     env.storage()
