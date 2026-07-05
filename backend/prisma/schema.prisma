@@ -1,4 +1,7 @@
-// Prisma database schema for StellarTrust backend.
+// Prisma database schema for StellarTrust Protocol backend.
+// Models are derived from DIDDocument, CreditScore, and IssuerMetadata
+// structs defined in contracts/shared/src/types.rs and
+// contracts/registry/src/issuers.rs.
 
 generator client {
   provider = "prisma-client-js"
@@ -9,40 +12,137 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------------------------------------------------------------------------
+// Identity — mirrors DIDDocument from contracts/shared/src/types.rs
+// ---------------------------------------------------------------------------
 model Identity {
-  id        String   @id @default(cuid())
-  address   String   @unique
-  did       String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  /// Stellar account address (G...)
+  address     String   @unique
+  /// Canonical DID string: did:stellar:<address>
+  did         String   @unique
+  /// Ed25519 public key (multibase-encoded) for the primary verification method
+  publicKeyMultibase String?
+  /// Unix timestamp (seconds) from the on-chain DID document
+  onChainCreatedAt   BigInt?
+  /// Unix timestamp (seconds) of last on-chain update
+  onChainUpdatedAt   BigInt?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  credentials Credential[]
 }
 
+// ---------------------------------------------------------------------------
+// Credential — mirrors CredentialRef from contracts/shared/src/types.rs
+// ---------------------------------------------------------------------------
 model Credential {
-  id             String    @id @default(cuid())
-  credentialId   String    @unique
+  id             String   @id @default(cuid())
+  /// Hex-encoded SHA-256 on-chain credential ID (BytesN<32>)
+  credentialId   String   @unique
   ownerAddress   String
   issuerAddress  String
+  /// String representation of CredentialType enum:
+  /// KYCBasic | KYCVerified | ProofOfAddress | EmploymentVerification |
+  /// IncomeVerification | EducationCertificate | BusinessRegistration | Custom:<value>
   credentialType String
-  issuedAt       DateTime  @default(now())
+  /// Hex-encoded SHA-256 hash of the off-chain credential payload
+  credentialHash String?
+  /// Optional IPFS CID pointing to the encrypted off-chain payload
+  ipfsCid        String?
+  issuedAt       DateTime @default(now())
   expiresAt      DateTime?
   revokedAt      DateTime?
+
+  identity       Identity @relation(fields: [ownerAddress], references: [address])
+  @@index([ownerAddress])
+  @@index([issuerAddress])
 }
 
+// ---------------------------------------------------------------------------
+// ScoreSnapshot — mirrors CreditScore / ScoreComponents from
+// contracts/credit-score/src/score.rs and lib.rs
+// ---------------------------------------------------------------------------
 model ScoreSnapshot {
   id         String   @id @default(cuid())
   address    String
+  /// Composite score on the 300–900 scale
   score      Int
-  dataPoints Int
+  /// Number of on-chain data points used in this snapshot
+  dataPoints Int      @default(0)
+
+  // --- ScoreComponents (35/20/15/10/10/10 weights) ----------------------
+  /// Payment history component sub-score (35% weight)
+  paymentHistory        Int @default(0)
+  /// Transaction volume component sub-score (20% weight)
+  transactionVolume     Int @default(0)
+  /// Account longevity component sub-score (15% weight)
+  accountLongevity      Int @default(0)
+  /// Asset diversity component sub-score (10% weight)
+  assetDiversity        Int @default(0)
+  /// Cross-border activity component sub-score (10% weight)
+  crossBorderActivity   Int @default(0)
+  /// Credential completeness component sub-score (10% weight)
+  credentialCompleteness Int @default(0)
+
   snapshotAt DateTime @default(now())
 
   @@index([address])
+  @@index([address, snapshotAt])
 }
 
+// ---------------------------------------------------------------------------
+// Issuer — mirrors IssuerRecord / IssuerMetadata from
+// contracts/registry/src/issuers.rs
+// ---------------------------------------------------------------------------
 model Issuer {
   id              String   @id @default(cuid())
+  /// Stellar account address of the issuer
   address         String   @unique
+  /// Human-readable display name (IssuerMetadata.name)
   name            String
+  /// Optional URL for the issuer's DID document or website
+  url             String?
+  /// List of credential type strings this issuer is authorised to issue.
+  /// Special value "ANY" means all types.
   credentialTypes String[]
   registeredAt    DateTime @default(now())
+  updatedAt       DateTime @updatedAt
   active          Boolean  @default(true)
+}
+
+// ---------------------------------------------------------------------------
+// Attestation — mirrors Attestation / AttestationClaim from
+// contracts/shared/src/types.rs
+// ---------------------------------------------------------------------------
+model AttestationRecord {
+  id           String   @id @default(cuid())
+  issuerAddress  String
+  subjectAddress String
+  claimKey     String
+  /// Base64-encoded claim value bytes
+  claimValue   String
+  attestedAt   DateTime @default(now())
+  expiresAt    DateTime?
+
+  @@index([subjectAddress])
+  @@index([issuerAddress])
+}
+
+// ---------------------------------------------------------------------------
+// WebhookEvent — stores incoming Soroban contract events for processing
+// ---------------------------------------------------------------------------
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  eventType   String
+  contractId  String
+  ledgerSeq   Int
+  payload     Json
+  processed   Boolean  @default(false)
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([contractId, ledgerSeq])
+  @@index([processed])
 }
