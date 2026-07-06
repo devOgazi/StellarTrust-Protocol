@@ -1,2 +1,1 @@
-// Stellar wallet integration components — placeholder.
-export {};
+export { WalletConnectButton } from './wallet-connect-button';

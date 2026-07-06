@@ -1,2 +1,2 @@
-// Layout components — placeholder.
-export {};
+export { Navbar } from './navbar';
+export { Footer } from './footer';
