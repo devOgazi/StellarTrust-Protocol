@@ -1,23 +1,205 @@
 name: Deploy to Mainnet
 
+# ── README Contract Upgrade Policy ───────────────────────────────────────────
+#
+# All mainnet contract upgrades must:
+#   1. Pass a governance vote  (>50% token quorum)    — Phase 2 feature
+#   2. Survive a 48-hour timelock after vote passes   — Phase 2 feature
+#   3. Pass automated security audit checks           — enforced below
+#   4. Be signed by 3-of-5 protocol multisig keys     — enforced below
+#
+# Until governance (Phase 2) is live, steps 1 and 2 are manual.
+# This workflow handles steps 3 and 4 via the GitHub "mainnet" environment,
+# which requires manual approval from three designated reviewers before any
+# deployment job runs.
+#
+# Trigger: push to `main` (requires pull-request merge, not direct push).
+
 on:
   push:
     branches: [main]
 
+concurrency:
+  group: deploy-mainnet
+  cancel-in-progress: false
+
 jobs:
-  deploy-mainnet:
-    name: Deploy contracts to Stellar mainnet
+  # ── Gate: all tests must pass ─────────────────────────────────────────────
+  test:
+    name: Verify tests pass
+    uses: ./.github/workflows/test.yml
+
+  # ── Gate: security scan ───────────────────────────────────────────────────
+  security-audit:
+    name: Security audit
     runs-on: ubuntu-latest
-    environment: mainnet   # requires manual approval
+    needs: test
+
     steps:
       - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # cargo-audit checks for known CVEs in Cargo dependencies
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Rust dependency audit
+        working-directory: contracts
+        run: cargo audit
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Backend npm audit
+        working-directory: backend
+        run: npm audit --audit-level=high
+
+  # ── Mainnet deployment — REQUIRES MANUAL APPROVAL ─────────────────────────
+  #
+  # The "mainnet" GitHub environment must be configured with:
+  #   Required reviewers: list the 3+ protocol multisig key holders
+  #   Wait timer: 2880 minutes (48 hours) to enforce the timelock
+  #
+  # Until Phase 2 governance is live, manually verify that:
+  #   [ ] Governance proposal passed with >50% quorum
+  #   [ ] 48-hour timelock has elapsed since proposal passed
+  #   [ ] This deployment has been reviewed and approved by 3 of 5 signers
+  deploy-contracts:
+    name: Deploy contracts to Stellar mainnet
+    runs-on: ubuntu-latest
+    needs: security-audit
+    environment: mainnet   # ← manual-approval gate
+
+    outputs:
+      identity_contract_id: ${{ steps.deploy.outputs.identity_contract_id }}
+      score_contract_id:    ${{ steps.deploy.outputs.score_contract_id }}
+      registry_contract_id: ${{ steps.deploy.outputs.registry_contract_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-mainnet-${{ hashFiles('contracts/Cargo.lock') }}
+
       - name: Install stellar-cli
         run: cargo install --locked stellar-cli --features opt
-      - name: Build & deploy
+
+      - name: Build contracts (release)
         working-directory: contracts
+        run: cargo build --target wasm32-unknown-unknown --release
+
+      - name: Deploy contracts to mainnet
+        id: deploy
         env:
           STELLAR_SECRET_KEY: ${{ secrets.MAINNET_SECRET_KEY }}
-        run: make deploy-mainnet
+          NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015"
+        run: |
+          WASM_DIR="contracts/target/wasm32-unknown-unknown/release"
+          NETWORK="mainnet"
+
+          deploy_contract() {
+            local wasm_file="$1"
+            local wasm_hash
+            wasm_hash=$(stellar contract upload \
+              --wasm "$wasm_file" \
+              --source "$STELLAR_SECRET_KEY" \
+              --network "$NETWORK" 2>&1 | tail -1)
+            stellar contract deploy \
+              --wasm-hash "$wasm_hash" \
+              --source "$STELLAR_SECRET_KEY" \
+              --network "$NETWORK" 2>&1 | tail -1
+          }
+
+          REGISTRY_ID=$(deploy_contract "$WASM_DIR/stellartrust_registry.wasm")
+          IDENTITY_ID=$(deploy_contract "$WASM_DIR/stellartrust_identity.wasm")
+          SCORE_ID=$(deploy_contract    "$WASM_DIR/stellartrust_credit_score.wasm")
+
+          echo "identity_contract_id=$IDENTITY_ID"  >> "$GITHUB_OUTPUT"
+          echo "score_contract_id=$SCORE_ID"         >> "$GITHUB_OUTPUT"
+          echo "registry_contract_id=$REGISTRY_ID"  >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "=== Mainnet deployment complete ==="
+          echo "IDENTITY_CONTRACT_ID  = $IDENTITY_ID"
+          echo "SCORE_CONTRACT_ID     = $SCORE_ID"
+          echo "REGISTRY_CONTRACT_ID  = $REGISTRY_ID"
+
+  # ── Build and push production Docker images ───────────────────────────────
+  build-images:
+    name: Build and push production images
+    runs-on: ubuntu-latest
+    needs: deploy-contracts
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/stellartrust-backend:latest
+            ghcr.io/${{ github.repository_owner }}/stellartrust-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/stellartrust-frontend:latest
+            ghcr.io/${{ github.repository_owner }}/stellartrust-frontend:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://api.stellartrust.io/api/v1
+            NEXT_PUBLIC_STELLAR_NETWORK=mainnet
+            NEXT_PUBLIC_STELLAR_HORIZON_URL=https://horizon.stellar.org
+            NEXT_PUBLIC_IPFS_GATEWAY=https://ipfs.stellartrust.io
+            NEXT_PUBLIC_IDENTITY_CONTRACT_ID=${{ needs.deploy-contracts.outputs.identity_contract_id }}
+            NEXT_PUBLIC_SCORE_CONTRACT_ID=${{ needs.deploy-contracts.outputs.score_contract_id }}
+            NEXT_PUBLIC_REGISTRY_CONTRACT_ID=${{ needs.deploy-contracts.outputs.registry_contract_id }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+  # ── Deployment summary ────────────────────────────────────────────────────
+  summary:
+    name: Deployment summary
+    runs-on: ubuntu-latest
+    needs: [deploy-contracts, build-images]
+
+    steps:
+      - name: Post deployment summary
+        run: |
+          echo "## 🚀 Mainnet Deployment Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract | ID |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Identity | \`${{ needs.deploy-contracts.outputs.identity_contract_id }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Credit Score | \`${{ needs.deploy-contracts.outputs.score_contract_id }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Registry | \`${{ needs.deploy-contracts.outputs.registry_contract_id }}\` |" >> "$GITHUB_STEP_SUMMARY"

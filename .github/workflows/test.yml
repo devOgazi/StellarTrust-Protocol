@@ -1,47 +1,151 @@
 name: Test
 
+# Runs on every push to main/develop and every pull request.
 on:
   push:
     branches: [main, develop]
   pull_request:
 
+# Cancel in-progress runs for the same ref so merged commits don't race.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # ── Soroban / Rust contract tests ──────────────────────────────────────────
   contracts:
-    name: Contract tests
+    name: Contract tests (Rust)
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
+      # Install stable Rust toolchain + wasm32 target
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run contract tests
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+
+      # Cache Cargo registry and build artefacts
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        working-directory: contracts
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (zero warnings)
+        working-directory: contracts
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Unit tests
         working-directory: contracts
         run: cargo test
 
-  backend:
-    name: Backend tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        working-directory: backend
-        run: npm ci
-      - name: Run tests
-        working-directory: backend
-        run: npm test
+      # Build release WASM to verify the full compilation pipeline
+      - name: Build release WASM
+        working-directory: contracts
+        run: cargo build --target wasm32-unknown-unknown --release
 
-  frontend:
-    name: Frontend tests
+  # ── Backend Node.js tests ──────────────────────────────────────────────────
+  backend:
+    name: Backend tests (Node.js)
     runs-on: ubuntu-latest
+
+    # Postgres service container for integration tests
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: stellartrust_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: backend
+        run: npm run db:generate
+
+      - name: Apply migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/stellartrust_test
+        run: npx prisma migrate deploy
+
+      - name: TypeScript compile check
+        working-directory: backend
+        run: npx tsc --noEmit
+
+      - name: Unit + integration tests
+        working-directory: backend
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/stellartrust_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: ci-test-secret
+          IDENTITY_CONTRACT_ID: C_PLACEHOLDER
+          SCORE_CONTRACT_ID: C_PLACEHOLDER
+          REGISTRY_CONTRACT_ID: C_PLACEHOLDER
+        run: npm test -- --forceExit
+
+  # ── Frontend component tests ───────────────────────────────────────────────
+  frontend:
+    name: Frontend tests (Next.js)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Install dependencies
         working-directory: frontend
         run: npm ci
-      - name: Run tests
+
+      - name: TypeScript compile check
         working-directory: frontend
-        run: npm test
+        run: npx tsc --noEmit
+
+      - name: Component tests (Vitest)
+        working-directory: frontend
+        run: npm test -- --run
