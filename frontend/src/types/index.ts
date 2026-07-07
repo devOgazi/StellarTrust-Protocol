@@ -8,48 +8,51 @@ export type CredentialType =
   | 'IncomeVerification'
   | 'EducationCertificate'
   | 'BusinessRegistration'
-  | { Custom: string };
+  | string; // Covers Custom:<value> variants
 
 export interface VerificationMethod {
   id: string;
-  key_type: string;
+  type: string;
   controller: string;
-  public_key: string;
+  publicKeyMultibase: string;
 }
 
 export interface CredentialRef {
   id: string;
-  credential_type: CredentialType;
+  type: string;
   issuer: string;
-  issued_at: number;
-  expires_at?: number;
-  credential_hash: string;
+  issuedAt: number;
+  expiresAt?: number;
+  credentialHash: string;
 }
 
+// W3C DID Document shape returned by GET /api/v1/identity/:address
 export interface DIDDocument {
-  did: string;
+  '@context': string[];
+  id: string;
   controller: string;
-  verification_methods: VerificationMethod[];
+  verificationMethod: VerificationMethod[];
+  authentication: string[];
+  service: Array<{ id: string; type: string; serviceEndpoint: string }>;
   credentials: CredentialRef[];
-  created_at: number;
-  updated_at: number;
 }
 
 export interface ScoreComponents {
-  payment_history: number;
-  account_longevity: number;
-  transaction_volume: number;
-  asset_diversity: number;
-  cross_border_activity: number;
-  credential_completeness: number;
+  paymentHistory: number;
+  accountLongevity: number;
+  transactionVolume: number;
+  assetDiversity: number;
+  crossBorderActivity: number;
+  credentialCompleteness: number;
 }
 
 export interface CreditScore {
   subject: string;
   score: number;
+  rating: string;
   components: ScoreComponents;
-  last_updated: number;
-  data_points: number;
+  dataPoints: number;
+  lastUpdated: string; // ISO-8601
 }
 
 export type ScoreRating =

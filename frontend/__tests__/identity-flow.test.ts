@@ -46,25 +46,29 @@ describe('Credential type labels', () => {
 });
 
 describe('Identity creation flow', () => {
+  // W3C DID Document shape returned by the backend resolver
   const MOCK_DID_DOCUMENT = {
-    did: 'did:stellar:GAHTJRC4UI7CQNNZXR4E3I6A4UGWKIA3ZVJM5GQSYSDIZJXR3KBZJXQ',
-    controller: 'GAHTJRC4UI7CQNNZXR4E3I6A4UGWKIA3ZVJM5GQSYSDIZJXR3KBZJXQ',
-    verification_methods: [],
+    '@context': [
+      'https://www.w3.org/ns/did/v1',
+      'https://stellartrust.io/contexts/v1',
+    ],
+    id: 'did:stellar:GAHTJRC4UI7CQNNZXR4E3I6A4UGWKIA3ZVJM5GQSYSDIZJXR3KBZJXQ',
+    controller: 'did:stellar:GAHTJRC4UI7CQNNZXR4E3I6A4UGWKIA3ZVJM5GQSYSDIZJXR3KBZJXQ',
+    verificationMethod: [],
+    authentication: [],
+    service: [],
     credentials: [],
-    created_at: 1717200000,
-    updated_at: 1717200000,
   };
 
-  it('DID document has correct structure', () => {
-    expect(MOCK_DID_DOCUMENT).toHaveProperty('did');
+  it('DID document has correct W3C structure', () => {
+    expect(MOCK_DID_DOCUMENT).toHaveProperty('id');
     expect(MOCK_DID_DOCUMENT).toHaveProperty('controller');
-    expect(MOCK_DID_DOCUMENT).toHaveProperty('verification_methods');
+    expect(MOCK_DID_DOCUMENT).toHaveProperty('verificationMethod');
     expect(MOCK_DID_DOCUMENT).toHaveProperty('credentials');
-    expect(MOCK_DID_DOCUMENT).toHaveProperty('created_at');
-    expect(MOCK_DID_DOCUMENT).toHaveProperty('updated_at');
+    expect(MOCK_DID_DOCUMENT).toHaveProperty('@context');
   });
 
   it('DID uses did:stellar: prefix', () => {
-    expect(MOCK_DID_DOCUMENT.did).toMatch(/^did:stellar:/);
+    expect(MOCK_DID_DOCUMENT.id).toMatch(/^did:stellar:/);
   });
 });

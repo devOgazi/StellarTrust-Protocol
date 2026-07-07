@@ -2,9 +2,12 @@
 
 import { Card, CardContent, CardHeader, CardTitle, Badge } from '@/components/ui';
 
+// Shape returned by GET /score/:address/history
 interface ScoreHistoryItem {
   score: number;
-  timestamp: string;
+  rating: string;
+  dataPoints: number;
+  snapshotAt: string; // ISO-8601
 }
 
 interface ScoreHistoryProps {
@@ -66,10 +69,10 @@ export function ScoreHistory({ history, loading }: ScoreHistoryProps) {
               className="flex items-center justify-between rounded-lg border p-3"
             >
               <span className="text-sm text-muted-foreground">
-                {formatDate(item.timestamp)}
+                {formatDate(item.snapshotAt)}
               </span>
               <Badge variant={scoreBadgeVariant(item.score)}>
-                {item.score}
+                {item.score} — {item.rating}
               </Badge>
             </div>
           ))}

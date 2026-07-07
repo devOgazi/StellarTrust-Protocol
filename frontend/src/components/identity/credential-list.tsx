@@ -66,11 +66,11 @@ export function CredentialList({ credentials, loading, onRevoked }: CredentialLi
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary">
-                    {credentialTypeLabel(cred.credential_type)}
+                    {credentialTypeLabel(cred.type)}
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Issued by {cred.issuer} &middot; {formatDate(cred.issued_at)}
+                  Issued by {cred.issuer} &middot; {formatDate(cred.issuedAt)}
                 </p>
               </div>
               <RevokeCredentialButton

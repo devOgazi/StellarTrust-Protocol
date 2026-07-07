@@ -71,13 +71,14 @@ describe('ScoreGauge color logic', () => {
 });
 
 describe('ScoreBreakdown component labels', () => {
+  // Updated to camelCase to match the backend API response
   const LABELS: Record<string, string> = {
-    payment_history: 'Payment History',
-    transaction_volume: 'Transaction Volume',
-    account_longevity: 'Account Longevity',
-    asset_diversity: 'Asset Diversity',
-    cross_border_activity: 'Cross-Border Activity',
-    credential_completeness: 'Credential Completeness',
+    paymentHistory: 'Payment History',
+    transactionVolume: 'Transaction Volume',
+    accountLongevity: 'Account Longevity',
+    assetDiversity: 'Asset Diversity',
+    crossBorderActivity: 'Cross-Border Activity',
+    credentialCompleteness: 'Credential Completeness',
   };
 
   it('has all 6 component labels', () => {
@@ -86,12 +87,12 @@ describe('ScoreBreakdown component labels', () => {
 
   it('covers all ScoreComponents keys', () => {
     const componentKeys = [
-      'payment_history',
-      'account_longevity',
-      'transaction_volume',
-      'asset_diversity',
-      'cross_border_activity',
-      'credential_completeness',
+      'paymentHistory',
+      'accountLongevity',
+      'transactionVolume',
+      'assetDiversity',
+      'crossBorderActivity',
+      'credentialCompleteness',
     ];
     componentKeys.forEach((key) => {
       expect(LABELS[key]).toBeDefined();

@@ -32,7 +32,7 @@ export default function IdentityCreatePage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-lg bg-secondary p-4">
-              <p className="text-sm font-mono break-all">{did.did}</p>
+              <p className="text-sm font-mono break-all">{did.id}</p>
             </div>
             <p className="text-sm text-muted-foreground">
               Your decentralized identifier has been created and anchored to the Stellar

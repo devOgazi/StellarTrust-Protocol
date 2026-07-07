@@ -8,21 +8,21 @@ interface ScoreBreakdownProps {
 }
 
 const COMPONENT_LABELS: Record<keyof ScoreComponents, string> = {
-  payment_history: 'Payment History',
-  transaction_volume: 'Transaction Volume',
-  account_longevity: 'Account Longevity',
-  asset_diversity: 'Asset Diversity',
-  cross_border_activity: 'Cross-Border Activity',
-  credential_completeness: 'Credential Completeness',
+  paymentHistory: 'Payment History',
+  transactionVolume: 'Transaction Volume',
+  accountLongevity: 'Account Longevity',
+  assetDiversity: 'Asset Diversity',
+  crossBorderActivity: 'Cross-Border Activity',
+  credentialCompleteness: 'Credential Completeness',
 };
 
 const COMPONENT_WEIGHTS: Record<keyof ScoreComponents, number> = {
-  payment_history: 35,
-  transaction_volume: 20,
-  account_longevity: 15,
-  asset_diversity: 10,
-  cross_border_activity: 10,
-  credential_completeness: 10,
+  paymentHistory: 35,
+  transactionVolume: 20,
+  accountLongevity: 15,
+  assetDiversity: 10,
+  crossBorderActivity: 10,
+  credentialCompleteness: 10,
 };
 
 function componentVariant(value: number): 'success' | 'warning' | 'danger' {

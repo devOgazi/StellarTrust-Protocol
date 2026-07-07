@@ -80,12 +80,12 @@ export default function ScorePage() {
               <CardContent className="space-y-2">
                 <div className="flex justify-between">
                   <span className="text-sm">Data Points</span>
-                  <span className="text-sm font-medium">{score.data_points}</span>
+                  <span className="text-sm font-medium">{score.dataPoints}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm">Last Updated</span>
                   <span className="text-sm font-medium">
-                    {new Date(score.last_updated).toLocaleDateString()}
+                    {new Date(score.lastUpdated).toLocaleDateString()}
                   </span>
                 </div>
               </CardContent>

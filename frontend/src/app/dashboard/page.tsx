@@ -37,7 +37,7 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-3xl font-bold">Dashboard</h1>
         <p className="text-muted-foreground">
-          {did?.did ?? addressToDid(address)}
+          {did?.id ?? addressToDid(address)}
         </p>
       </div>
 
