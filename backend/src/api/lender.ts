@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { PrismaClient } from '@prisma/client';
 import { ScoreEngineService } from '../services/score-engine';
 import { DIDResolverService } from '../services/did-resolver';
-import { requireAuth } from '../middleware/auth';
+import { optionalAuth } from '../middleware/auth';
 import { lenderRateLimit } from '../middleware/ratelimit';
 import { isValidStellarAddress } from '../utils/stellar';
 
@@ -52,7 +52,7 @@ export function createLenderRouter(prisma: PrismaClient): Router {
   router.post(
     '/verify',
     lenderRateLimit,
-    requireAuth,
+    optionalAuth,
     async (req: Request, res: Response): Promise<void> => {
       const parsed = LenderVerifySchema.safeParse(req.body);
       if (!parsed.success) {

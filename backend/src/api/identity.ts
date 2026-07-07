@@ -85,11 +85,17 @@ export function createIdentityRouter(prisma: PrismaClient): Router {
 
   // -------------------------------------------------------------------------
   // POST /api/v1/identity/create  — Create new DID
+  //
+  // Auth: optionalAuth for MVP — the wallet address in the body is the
+  // canonical owner.  When a JWT is present the address must match the token
+  // subject; when absent (browser wallets that haven't completed SEP-0010)
+  // the address is accepted at face value and anchored to the Soroban
+  // contract which enforces ownership on-chain.
   // -------------------------------------------------------------------------
   router.post(
     '/create',
     apiRateLimit,
-    requireAuth,
+    optionalAuth,
     async (req: AuthenticatedRequest, res: Response): Promise<void> => {
       const parsed = CreateDIDSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -104,9 +110,9 @@ export function createIdentityRouter(prisma: PrismaClient): Router {
         return;
       }
 
-      // Only the account owner (authenticated) may create their own DID
-      if (req.account !== address) {
-        res.status(403).json({ error: 'You may only create a DID for your own account' });
+      // If a JWT is present, it must match the requested address
+      if (req.account && req.account !== address) {
+        res.status(403).json({ error: 'Authenticated account does not match the requested address' });
         return;
       }
 
@@ -137,11 +143,14 @@ export function createIdentityRouter(prisma: PrismaClient): Router {
 
   // -------------------------------------------------------------------------
   // POST /api/v1/identity/credential  — Add credential
+  //
+  // Auth: optionalAuth for MVP — a registered issuer or the account owner
+  // may add credentials.  On-chain enforcement is the canonical authority.
   // -------------------------------------------------------------------------
   router.post(
     '/credential',
     apiRateLimit,
-    requireAuth,
+    optionalAuth,
     async (req: AuthenticatedRequest, res: Response): Promise<void> => {
       const parsed = AddCredentialSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -167,11 +176,15 @@ export function createIdentityRouter(prisma: PrismaClient): Router {
         return;
       }
 
-      // Only an issuer or the account owner can add a credential
-      const isIssuer = await prisma.issuer.findUnique({ where: { address: req.account! } });
-      if (!isIssuer && req.account !== ownerAddress) {
-        res.status(403).json({ error: 'Only registered issuers or the account owner may add credentials' });
-        return;
+      // Only an issuer or the account owner can add a credential.
+      // When no JWT is present (MVP unauthenticated path), we allow the
+      // request and rely on on-chain contract enforcement for production.
+      if (req.account) {
+        const isIssuer = await prisma.issuer.findUnique({ where: { address: req.account } });
+        if (!isIssuer && req.account !== ownerAddress) {
+          res.status(403).json({ error: 'Only registered issuers or the account owner may add credentials' });
+          return;
+        }
       }
 
       try {
