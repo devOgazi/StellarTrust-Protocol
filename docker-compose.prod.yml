@@ -1,44 +1,138 @@
 version: '3.9'
 
+# ── StellarTrust Protocol — Production Stack ──────────────────────────────────
+#
+# Uses pre-built images from GHCR.  Nginx terminates TLS (certs via volume)
+# and reverse-proxies to backend (:4000), frontend (:3000), and the IPFS
+# gateway (:8080) under a single public IP.
+#
+# Required environment variables (set in a .env file or CI secrets):
+#   POSTGRES_PASSWORD   strong password for Postgres
+#   JWT_SECRET          random 64-char secret for JWT signing
+#   CREDENTIAL_ENCRYPTION_KEY  32-byte hex key
+#   IDENTITY_CONTRACT_ID / SCORE_CONTRACT_ID / REGISTRY_CONTRACT_ID
+#   STELLAR_SECRET_KEY  (backend only — used by indexer worker)
+#
+# Usage:
+#   docker-compose -f docker-compose.prod.yml up -d
+
 services:
+
+  # ── PostgreSQL 15 ───────────────────────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
+    restart: always
     environment:
       POSTGRES_DB: stellartrust
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d stellartrust']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Not exposed to host in production — only reachable by backend
+    expose:
+      - '5432'
 
+  # ── Redis 7 ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    restart: unless-stopped
+    restart: always
+    command: ['redis-server', '--save', '60', '1', '--loglevel', 'warning']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    expose:
+      - '6379'
 
+  # ── IPFS (Kubo) ─────────────────────────────────────────────────────────────
   ipfs:
     image: ipfs/kubo:v0.27.0
+    restart: always
     volumes:
       - ipfs_data:/data/ipfs
-    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:5001/api/v0/id || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    # Swarm port exposed for peer connectivity; API & gateway only via nginx
+    ports:
+      - '4001:4001'
+    expose:
+      - '5001'
+      - '8080'
 
+  # ── Backend (Node.js / Express) ─────────────────────────────────────────────
   backend:
-    image: ghcr.io/stellartrust/backend:latest
-    env_file:
-      - ./backend/.env
+    image: ghcr.io/stellartrust/backend:${IMAGE_TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/stellartrust
+      REDIS_URL: redis://redis:6379
+      IPFS_API_URL: http://ipfs:5001
+      IPFS_GATEWAY_URL: http://ipfs:8080
+      STELLAR_NETWORK: mainnet
+      STELLAR_RPC_URL: https://soroban-mainnet.stellar.org
+      STELLAR_HORIZON_URL: https://horizon.stellar.org
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRY: ${JWT_EXPIRY:-7d}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
+      IDENTITY_CONTRACT_ID: ${IDENTITY_CONTRACT_ID}
+      SCORE_CONTRACT_ID: ${SCORE_CONTRACT_ID}
+      REGISTRY_CONTRACT_ID: ${REGISTRY_CONTRACT_ID}
     depends_on:
-      - postgres
-      - redis
-      - ipfs
-    restart: unless-stopped
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+    expose:
+      - '4000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:4000/health || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 15
 
+  # ── Frontend (Next.js) ───────────────────────────────────────────────────────
   frontend:
-    image: ghcr.io/stellartrust/frontend:latest
-    env_file:
-      - ./frontend/.env.local
+    image: ghcr.io/stellartrust/frontend:${IMAGE_TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+    depends_on:
+      backend:
+        condition: service_healthy
+    expose:
+      - '3000'
+
+  # ── Nginx reverse proxy ──────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    restart: always
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
     depends_on:
       - backend
-    restart: unless-stopped
+      - frontend
+      - ipfs
 
 volumes:
   postgres_data:
+  redis_data:
   ipfs_data:

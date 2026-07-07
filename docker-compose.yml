@@ -1,8 +1,26 @@
 version: '3.9'
 
+# ── StellarTrust Protocol — Local Development Stack ───────────────────────────
+#
+# Quick start:
+#   cp backend/.env.example backend/.env
+#   cp frontend/.env.example frontend/.env.local
+#   docker-compose up -d
+#
+# Services exposed on host:
+#   Frontend       http://localhost:3000
+#   Backend API    http://localhost:4000
+#   API docs       http://localhost:4000/docs
+#   IPFS gateway   http://localhost:8080
+#   Postgres       localhost:5432
+#   Redis          localhost:6379
+
 services:
+
+  # ── PostgreSQL 15 ───────────────────────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: stellartrust
       POSTGRES_USER: postgres
@@ -11,44 +29,87 @@ services:
       - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d stellartrust']
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
+  # ── Redis 7 ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
+  # ── IPFS (Kubo) ─────────────────────────────────────────────────────────────
   ipfs:
     image: ipfs/kubo:v0.27.0
+    restart: unless-stopped
     ports:
-      - '4001:4001'
-      - '5001:5001'
-      - '8080:8080'
+      - '4001:4001'   # swarm
+      - '5001:5001'   # API
+      - '8080:8080'   # gateway
     volumes:
       - ipfs_data:/data/ipfs
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:5001/api/v0/id || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
+  # ── Backend (Node.js / Express) ─────────────────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - '4000:4000'
     env_file:
       - ./backend/.env
+    environment:
+      # Override DB / Redis URLs so they point at the Docker service names
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/stellartrust
+      REDIS_URL: redis://redis:6379
+      IPFS_API_URL: http://ipfs:5001
+      IPFS_GATEWAY_URL: http://ipfs:8080
     depends_on:
-      - postgres
-      - redis
-      - ipfs
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:4000/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 15
 
+  # ── Frontend (Next.js) ───────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
+        NEXT_PUBLIC_STELLAR_NETWORK: testnet
+        NEXT_PUBLIC_STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+        NEXT_PUBLIC_IPFS_GATEWAY: http://localhost:8080
+    restart: unless-stopped
     ports:
       - '3000:3000'
     env_file:
       - ./frontend/.env.local
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
